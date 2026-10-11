@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 async function main() {
-  console.log("🚀 Testing MCP Server v1.1.0 (Tools + Resources + Telemetry)...\n");
+  console.log("🚀 Testing MCP Server v1.2.0 (State Mutation + Prompt Templates)...\n");
 
   const transport = new StdioClientTransport({
     command: "node",
@@ -10,39 +10,51 @@ async function main() {
   });
 
   const client = new Client(
-    { name: "terminal-test-client", version: "1.1.0" },
+    { name: "terminal-test-client", version: "1.2.0" },
     { capabilities: {} }
   );
 
   await client.connect(transport);
   console.log("✅ Connection established.\n");
 
-  // 1. Resources Test (SOPs check karein)
-  console.log("📚 Checking Available MCP Resources (Internal SOPs)...");
-  const resourcesList = await client.listResources();
-  console.log("Discovered Resources:", resourcesList.resources.map((r) => r.uri));
-
-  console.log("\n📖 Reading Resource: sop://support/billing-escalation...");
-  const sopContent = await client.readResource({ uri: "sop://support/billing-escalation" });
-  
-  const firstResource = sopContent.contents[0];
-  if ("text" in firstResource) {
-    console.log("SOP Content:\n", firstResource.text);
+  // 1. Prompts Capability Test
+  console.log("📋 Fetching Prompt Template: ticket_triage_prompt for TCK-101...");
+  const promptData = await client.getPrompt({
+    name: "ticket_triage_prompt",
+    arguments: { ticketId: "TCK-101" }
+  });
+  const firstMsg = promptData.messages[0];
+  if (firstMsg && firstMsg.content && typeof firstMsg.content === "object" && "text" in firstMsg.content) {
+    console.log("Prompt Briefing Content:\n", firstMsg.content.text);
   }
 
-  // 2. Tool + Telemetry Test
-  console.log("\n⚡ Executing Tool: query_tickets_by_category ('billing')...");
-  const toolResult = await client.callTool({
-    name: "query_tickets_by_category",
-    arguments: { category: "billing", limit: 2 }
+  // 2. State Mutation Test (update ticket status)
+  console.log("\n⚡ Executing Tool: update_ticket_status...");
+  const mutationResult = await client.callTool({
+    name: "update_ticket_status",
+    arguments: {
+      ticketId: "TCK-101",
+      status: "in_progress",
+      agentName: "AziJan-SupportBot",
+      note: "Investigating double charge on Stripe dashboard"
+    }
   });
 
-  console.log("\n🎯 Tool Execution Response with Telemetry:");
-  const content = toolResult.content as Array<{ type: string; text: string }>;
-  console.log(content[0].text);
+  const mutationContent = mutationResult.content as Array<{ type: string; text: string }>;
+  console.log("Mutation Result:\n", mutationContent[0].text);
+
+  // 3. State Verification Test (Query check)
+  console.log("\n🔍 Verifying state update via query_tickets_by_category...");
+  const queryResult = await client.callTool({
+    name: "query_tickets_by_category",
+    arguments: { category: "billing", limit: 1 }
+  });
+
+  const queryContent = queryResult.content as Array<{ type: string; text: string }>;
+  console.log("Verified State Response:\n", queryContent[0].text);
 
   await client.close();
-  console.log("\n🏁 All Tests Passed Successfully!");
+  console.log("\n🏁 State Lifecycle Test Completed Successfully!");
   process.exit(0);
 }
 
