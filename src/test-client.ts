@@ -5,8 +5,8 @@ async function main() {
   console.log("🚀 Testing MCP Server v1.1.0 (Tools + Resources + Telemetry)...\n");
 
   const transport = new StdioClientTransport({
-    command: "npx",
-    args: ["tsx", "src/index.ts"]
+    command: "node",
+    args: ["dist/index.js"]
   });
 
   const client = new Client(
@@ -20,11 +20,15 @@ async function main() {
   // 1. Resources Test (SOPs check karein)
   console.log("📚 Checking Available MCP Resources (Internal SOPs)...");
   const resourcesList = await client.listResources();
-  console.log("Discovered Resources:", resourcesList.resources.map(r => r.uri));
+  console.log("Discovered Resources:", resourcesList.resources.map((r) => r.uri));
 
   console.log("\n📖 Reading Resource: sop://support/billing-escalation...");
   const sopContent = await client.readResource({ uri: "sop://support/billing-escalation" });
-  console.log("SOP Content:\n", sopContent.contents[0].text);
+  
+  const firstResource = sopContent.contents[0];
+  if ("text" in firstResource) {
+    console.log("SOP Content:\n", firstResource.text);
+  }
 
   // 2. Tool + Telemetry Test
   console.log("\n⚡ Executing Tool: query_tickets_by_category ('billing')...");
@@ -34,7 +38,8 @@ async function main() {
   });
 
   console.log("\n🎯 Tool Execution Response with Telemetry:");
-  console.log(toolResult.content[0].text);
+  const content = toolResult.content as Array<{ type: string; text: string }>;
+  console.log(content[0].text);
 
   await client.close();
   console.log("\n🏁 All Tests Passed Successfully!");

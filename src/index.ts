@@ -9,6 +9,7 @@ import {
 import { QueryTicketsSchema, executeQueryTickets } from "./tools/tickets.js";
 import { InternalSOPs } from "./resources/sops.js";
 import { TelemetryLogger } from "./lib/telemetry.js";
+import { Tracer } from "./lib/tracer.js";
 
 const server = new Server(
   {
@@ -52,81 +53,52 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   };
 });
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: "query_tickets_by_category",
-        description: "Fetch support tickets deterministically by category with validation guards.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            category: {
-              type: "string",
-              enum: ["technical_bug", "billing", "urgent_escalation", "general_query"],
-              description: "The ticket classification category"
-            },
-            limit: {
-              type: "number",
-              description: "Max number of records to return (1-20)"
-            }
-          },
-          required: ["category"]
-        }
-      }
-    ]
-  };
-});
-
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const startTime = performance.now();
-  const traceId = `trc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-
   if (request.params.name === "query_tickets_by_category") {
+    // 1. Trace session create karein
+    const trace = Tracer.createTrace("query_tickets_by_category");
+
     try {
-      const parsed = QueryTicketsSchema.safeParse(request.params.arguments);
-
-      if (!parsed.success) {
-        throw new Error(`Validation Error: ${JSON.stringify(parsed.error.format())}`);
-      }
-
-      const data = await executeQueryTickets(parsed.data);
-      const latencyMs = performance.now() - startTime;
-
-      TelemetryLogger.record({
-        traceId,
-        toolName: "query_tickets_by_category",
-        status: "success",
-        latencyMs,
-        timestamp: new Date().toISOString(),
-        metadata: { category: parsed.data.category, resultCount: data.count }
+      // Span 1: Input Validation time trace karein
+      const parsed = await trace.measureSpan("input_schema_validation", () => {
+        const result = QueryTicketsSchema.safeParse(request.params.arguments);
+        if (!result.success) {
+          throw new Error(`Validation Error: ${JSON.stringify(result.error.format())}`);
+        }
+        return result.data;
       });
+
+      // Span 2: Actual DB/Tool Execution time trace karein
+      const data = await trace.measureSpan("database_execution", async () => {
+        return await executeQueryTickets(parsed);
+      });
+
+      // Trace complete karein
+      const record = trace.finish("success");
 
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify({ ...data, _telemetry: { traceId, latencyMs: Number(latencyMs.toFixed(2)) } }, null, 2)
+            text: JSON.stringify({
+              ...data,
+              _telemetry: {
+                traceId: record.traceId,
+                totalDurationMs: record.totalDurationMs,
+                spans: record.spans
+              }
+            }, null, 2)
           }
         ]
       };
     } catch (error: any) {
-      const latencyMs = performance.now() - startTime;
-      TelemetryLogger.record({
-        traceId,
-        toolName: "query_tickets_by_category",
-        status: "failure",
-        latencyMs,
-        timestamp: new Date().toISOString(),
-        metadata: { error: error.message }
-      });
+      trace.finish("error", error.message);
       throw error;
     }
   }
 
   throw new Error(`Unknown tool: ${request.params.name}`);
 });
-
 async function run() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
